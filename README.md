@@ -8,11 +8,11 @@
 
 效果如下图
 <div align="center">
-<img width="700" src="./docs/1WechatIMG60579.png">
+<img width="700" src="./docs/1WechatIMG60579.jpg">
 </div>
 
 <div align="center">
-<img width="700" src="./docs/1WechatIMG60586.png">
+<img width="700" src="./docs/1WechatIMG60586.jpg">
 </div>
 
 
