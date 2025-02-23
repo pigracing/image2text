@@ -65,6 +65,10 @@ class Image2Text(Plugin):
             openai_headers = self._get_openai_headers()
             openai_payload = None
             if context.type == ContextType.IMAGE:
+               if retry_count == 0:
+                   reply = Reply(ReplyType.TEXT, self.invoking_reply)
+                   channel = e_context["channel"]
+                   channel.send(reply, context)
                img_data = f"data:image/png;base64,{img_buff}"
                user_text = [
                    {
