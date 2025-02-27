@@ -123,8 +123,8 @@ class Image2Text(Plugin):
                      e_context.action = EventAction.BREAK_PASS
                      return
                else:
-                   print(msg_type)
-                   e_context.action = EventAction.BREAK_PASS
+                   #print(msg_type)
+                   e_context.action = EventAction.CONTINUE
                    return
 
             openai_payload = self._get_openai_payload(user_text)
@@ -151,7 +151,7 @@ class Image2Text(Plugin):
         return f'根据设定的关键字调用相应的API服务'
 
     def _load_config_template(self):
-        logger.debug("No Image2Text plugin config.json, use plugins/keyword_call/config.json.template")
+        logger.debug("No Image2Text plugin config.json, use plugins/image2text/config.json.template")
         try:
             plugin_config_path = os.path.join(self.path, "config.json.template")
             if os.path.exists(plugin_config_path):
