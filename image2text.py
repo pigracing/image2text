@@ -57,84 +57,85 @@ class Image2Text(Plugin):
             self.open_ai_model = self.config.get("open_ai_model","")
             self.prompt = self.config.get("prompt", "")
             content = context["content"]
-            prompt = None
-            openai_chat_url = self.open_ai_api_base
-            openai_headers = self._get_openai_headers()
-            openai_payload = None
             user_text = None
-            print(context.type)
             if context.type == ContextType.IMAGE:
                chat_message:ChatMessage = context["msg"]
                gewe_msg:GeWeChatMessage = chat_message.msg
-               msg_type = gewe_msg["Data"]["MsgType"]
-               img_buff = gewe_msg["Data"]["ImgBuf"]["buffer"]
-               new_msg_id = gewe_msg["Data"]["NewMsgId"]
+               msg_type = gewe_msg["data"]["MsgType"]
+               img_buff = gewe_msg["data"]["ImgBuf"]["buffer"]
+               new_msg_id = gewe_msg["data"]["NewMsgId"]
                self.images_cache[str(new_msg_id)] = img_buff
-               if retry_count == 0:
-                   reply = Reply(ReplyType.TEXT, self.invoking_reply)
-                   channel = e_context["channel"]
-                   channel.send(reply, context)
-
-               img_data = f"data:image/png;base64,{img_buff}"
-               user_text = [
-                   {
-                      "type": "text",
-                      "text": self.prompt
-                   },
-                   {
-                      "type": "image_url",
-                      "image_url": {
-                          "url":img_data
-                       }
-                   }
-               ]
             else:
-               print('处理文本')
+               print('image2text--处理文本')
+               print(context.type)
                chat_message:ChatMessage = context["msg"]
                #print(chat_message)
+               if isinstance(chat_message, ChatMessage) == False or hasattr(chat_message, "msg") == False:
+                  return
                gewe_msg:GeWeChatMessage = chat_message.msg
                #print(gewe_msg)
-               msg_type = gewe_msg["Data"]["MsgType"]
+               msg_type = gewe_msg["data"]["MsgType"]
                #print(msg_type)
+               #当引用图片时，才有效
                if msg_type == 49:
-                  content_xml = gewe_msg["Data"]["Content"]["string"]
-                  pattern = r"<svrid>(.*?)</svrid>"
-                  match = re.search(pattern, content_xml)
-                  svrid = match.group(1) if match else None
-                  print(svrid)
-                  img_buff = self.images_cache.get(svrid)
-                  if img_buff:
-                     img_data = f"data:image/png;base64,{img_buff}"
-                     user_text = [
-                     {
-                      "type": "text",
-                      "text": self.prompt
-                     },
-                     {
-                      "type": "image_url",
-                      "image_url": {
-                          "url":img_data
-                       }
-                     }
-                     ]
-                  else:
-                     reply = Reply(ReplyType.ERROR, "引用的图片已超过5分钟，请重新发送图片，然后@我进行分析")
-                     e_context["reply"] = reply
-                     e_context.action = EventAction.BREAK_PASS
+                  content = gewe_msg["data"]["PushContent"]
+                  if content.startswith(("#invoking_reply#", "#error_reply#", "#translator#")):
+                     logger.debug("命中插件保留字，不进行响应")
                      return
+                  logger.debug("[image2text] on_handle_context. content: %s" % content)
+                  keywords = list(self.config.keys())
+                  matching_keywords = [keyword for keyword in keywords if content.startswith(keyword)]
+                  if matching_keywords:
+                     print(f"匹配到以关键字开头：{matching_keywords[0]}")
+                     print(f"匹配到以关键字配置内容：{self.config[matching_keywords[0]]}")
+                     if retry_count == 0:
+                        reply = Reply(ReplyType.TEXT, self.invoking_reply)
+                        channel = e_context["channel"]
+                        channel.send(reply, context)
+                     self.api_type = self.config[matching_keywords[0]].get("api_type", "")
+                     self.open_ai_api_base = self.config[matching_keywords[0]].get("open_ai_api_base", "")
+                     self.open_ai_api_key = self.config[matching_keywords[0]].get("open_ai_api_key", "")
+                     self.open_ai_model = self.config[matching_keywords[0]].get("open_ai_model","")
+                     self.prompt = self.config[matching_keywords[0]].get("prompt", "")
+                     openai_chat_url = self.open_ai_api_base
+                     openai_headers = self._get_openai_headers()
+
+                     content_xml = gewe_msg["data"]["Content"]["string"]
+                     pattern = r"<svrid>(.*?)</svrid>"
+                     match = re.search(pattern, content_xml)
+                     svrid = match.group(1) if match else None
+                     print(svrid)
+                     img_buff = self.images_cache.get(svrid)
+                     if img_buff:
+                        img_data = f"data:image/png;base64,{img_buff}"
+                        user_text = [
+                        {
+                         "type": "text",
+                         "text": self.prompt
+                        },
+                        {
+                         "type": "image_url",
+                         "image_url": {
+                            "url":img_data
+                         }
+                        }
+                        ]
+                        openai_payload = self._get_openai_payload(user_text)
+                        logger.debug(f"[Image2Text-ParseImage] openai_chat_url: {openai_chat_url}, openai_headers: {openai_headers}, openai_payload: {openai_payload}")
+                        response = requests.post(openai_chat_url, headers=openai_headers, json=openai_payload, timeout=60)
+                        response.raise_for_status()
+                        result = response.json()['choices'][0]['message']['content']
+                        reply = Reply(ReplyType.TEXT, result)
+                        e_context["reply"] = reply
+                        e_context.action = EventAction.BREAK_PASS
+                     else:
+                        reply = Reply(ReplyType.ERROR, "引用的图片已超过5分钟，请重新发送图片，然后@我进行分析")
+                        e_context["reply"] = reply
+                        e_context.action = EventAction.BREAK_PASS
+                        return
                else:
-                   #print(msg_type)
                    e_context.action = EventAction.CONTINUE
                    return
-
-            openai_payload = self._get_openai_payload(user_text)
-            logger.debug(f"[Image2Text] openai_chat_url: {openai_chat_url}, openai_headers: {openai_headers}, openai_payload: {openai_payload}")
-            response = requests.post(openai_chat_url, headers=openai_headers, json=openai_payload, timeout=60)
-            response.raise_for_status()
-            result = response.json()['choices'][0]['message']['content']
-            reply = Reply(ReplyType.TEXT, result)
-            e_context["reply"] = reply
-            e_context.action = EventAction.BREAK_PASS
 
         except Exception as e:
             if retry_count < 3:
