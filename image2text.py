@@ -61,10 +61,18 @@ class Image2Text(Plugin):
             if context.type == ContextType.IMAGE:
                chat_message:ChatMessage = context["msg"]
                gewe_msg:GeWeChatMessage = chat_message.msg
+               #print(gewe_msg)
                msg_type = gewe_msg["data"]["MsgType"]
-               img_buff = gewe_msg["data"]["ImgBuf"]["buffer"]
+               img_buff = gewe_msg["data"]["ImgBuf"].get("buffer")
+               if img_buff is None:
+                  print("Warning: 'buffer' key is missing in ImgBuf")
+                  return
                new_msg_id = gewe_msg["data"]["NewMsgId"]
                self.images_cache[str(new_msg_id)] = img_buff
+               reply = Reply(ReplyType.TEXT, "如果您想让我分析图片，请在发完图片5分钟内，引用图片，发送以分析开头的指令，例如分析一下图片中都有什么")
+               e_context["reply"] = reply
+               e_context.action = EventAction.BREAK_PASS
+               return
             else:
                print('image2text--处理文本')
                print(context.type)
@@ -111,7 +119,7 @@ class Image2Text(Plugin):
                         user_text = [
                         {
                          "type": "text",
-                         "text": self.prompt
+                         "text": self.prompt+" "+content
                         },
                         {
                          "type": "image_url",
