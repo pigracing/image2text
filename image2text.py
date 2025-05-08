@@ -15,7 +15,7 @@ from bridge.reply import Reply, ReplyType
 from common.log import logger
 from plugins import *
 from channel.chat_message import ChatMessage
-from channel.gewechat.gewechat_message import GeWeChatMessage
+from channel.wx849.wx849_message import WX849Message
 from common.tmp_dir import TmpDir
 from common.expired_dict import ExpiredDict
 
@@ -47,9 +47,11 @@ class Image2Text(Plugin):
     def on_handle_context(self, e_context: EventContext, retry_count: int = 0):
         try:
             context = e_context["context"]
+            print(context.type)
             if context.type not in [
                 ContextType.TEXT,
-                ContextType.IMAGE
+                ContextType.IMAGE,
+                'XML'
             ]:
                 return
             self.open_ai_api_base = self.config.get("open_ai_api_base", "")
@@ -59,34 +61,34 @@ class Image2Text(Plugin):
             content = context["content"]
             user_text = None
             if context.type == ContextType.IMAGE:
-               chat_message:ChatMessage = context["msg"]
-               gewe_msg:GeWeChatMessage = chat_message.msg
-               #print(gewe_msg)
-               msg_type = gewe_msg["data"]["MsgType"]
-               img_buff = gewe_msg["data"]["ImgBuf"].get("buffer")
-               if img_buff is None:
-                  print("Warning: 'buffer' key is missing in ImgBuf")
+               wx849_msg:WX849Message = context["msg"]
+               cdnthumbaeskey = wx849_msg.image_info.get("aeskey")
+               if cdnthumbaeskey is None:
+                  print("Warning: 'cdnthumbaeskey' is missing")
                   return
-               new_msg_id = gewe_msg["data"]["NewMsgId"]
-               self.images_cache[str(new_msg_id)] = img_buff
+               self.images_cache[str(cdnthumbaeskey)] = content
                reply = Reply(ReplyType.TEXT, "如果您想让我分析图片，请在发完图片5分钟内，引用图片，发送以分析开头的指令，例如分析一下图片中都有什么")
                e_context["reply"] = reply
                e_context.action = EventAction.BREAK_PASS
                return
             else:
                print('image2text--处理文本')
-               print(context.type)
-               chat_message:ChatMessage = context["msg"]
-               #print(chat_message)
-               if isinstance(chat_message, ChatMessage) == False or hasattr(chat_message, "msg") == False:
-                  return
-               gewe_msg:GeWeChatMessage = chat_message.msg
-               #print(gewe_msg)
-               msg_type = gewe_msg["data"]["MsgType"]
-               #print(msg_type)
+               wx849_msg:WX849Message = context["msg"]
+               msg_type = wx849_msg.msg_type
                #当引用图片时，才有效
                if msg_type == 49:
-                  content = gewe_msg["data"]["PushContent"]
+                  cdnthumbaeskey = ''
+                  if wx849_msg.quoted_message is None:
+                     logger.debug("没有找到引用的内容信息，请注意图片的时效性")
+                     return 
+                  quoted_message_str = wx849_msg.quoted_message.get("Content")
+                  match = re.search(r'cdnthumbaeskey="([^"]+)"', quoted_message_str)
+                  if match: 
+                     cdnthumbaeskey = match.group(1)
+                  else:
+                     logger.debug("没有找到cdnthumbaeskey！")
+                     return 
+
                   if content.startswith(("#invoking_reply#", "#error_reply#", "#translator#")):
                      logger.debug("命中插件保留字，不进行响应")
                      return
@@ -105,17 +107,16 @@ class Image2Text(Plugin):
                      self.open_ai_api_key = self.config[matching_keywords[0]].get("open_ai_api_key", "")
                      self.open_ai_model = self.config[matching_keywords[0]].get("open_ai_model","")
                      self.prompt = self.config[matching_keywords[0]].get("prompt", "")
+                     self.response_type = self.config[matching_keywords[0]].get("response_type","text")
+                     self.response_regex = self.config[matching_keywords[0]].get("response_regex","")
                      openai_chat_url = self.open_ai_api_base
                      openai_headers = self._get_openai_headers()
 
-                     content_xml = gewe_msg["data"]["Content"]["string"]
-                     pattern = r"<svrid>(.*?)</svrid>"
-                     match = re.search(pattern, content_xml)
-                     svrid = match.group(1) if match else None
-                     print(svrid)
-                     img_buff = self.images_cache.get(svrid)
-                     if img_buff:
-                        img_data = f"data:image/png;base64,{img_buff}"
+                     img_url = self.images_cache.get(cdnthumbaeskey)
+                     if img_url:
+                        with open(img_url, 'rb') as f:
+                           img_base64 = base64.b64encode(f.read()).decode('utf-8')
+                        img_data = f"data:image/png;base64,{img_base64}"
                         user_text = [
                         {
                          "type": "text",
@@ -129,10 +130,33 @@ class Image2Text(Plugin):
                         }
                         ]
                         openai_payload = self._get_openai_payload(user_text)
-                        logger.debug(f"[Image2Text-ParseImage] openai_chat_url: {openai_chat_url}, openai_headers: {openai_headers}, openai_payload: {openai_payload}")
-                        response = requests.post(openai_chat_url, headers=openai_headers, json=openai_payload, timeout=60)
+                        #logger.debug(f"[Image2Text-ParseImage] openai_chat_url: {openai_chat_url}, openai_headers: {openai_headers}, openai_payload: {openai_payload}")
+                        response = requests.post(openai_chat_url, headers=openai_headers, json=openai_payload, timeout=90)
                         response.raise_for_status()
-                        result = response.json()['choices'][0]['message']['content']
+                        if self.response_type == "text":
+                           result = response.json()['choices'][0]['message']['content']
+                        else:
+                           re_content = response.json()['choices'][0]['message']['content']
+                           if self.response_regex:
+                              images = re.findall(self.response_regex, re_content)
+                              if images:
+                                 for image_url in images:
+                                   if image_url.startswith("http"):
+                                      reply = Reply(ReplyType.IMAGE_URL,image_url)
+                                   elif image_url.startswith("data:image"):
+                                      print("data:image")
+                                      _header, _encoded = image_url.split(",", 1)
+                                      base64Content = base64.b64decode(_encoded)
+                                      b_img = io.BytesIO(base64Content)
+                                      reply = Reply(ReplyType.IMAGE,b_img)
+                                   else:
+                                      base64Content = base64.b64decode(image_url)
+                                      b_img = io.BytesIO(base64Content)
+                                      reply = Reply(ReplyType.IMAGE,b_img)
+                                   channel = e_context["channel"]
+                                   channel.send(reply, context)
+                                 e_context.action = EventAction.BREAK_PASS
+                                 return
                         reply = Reply(ReplyType.TEXT, result)
                         e_context["reply"] = reply
                         e_context.action = EventAction.BREAK_PASS
