@@ -1,5 +1,5 @@
 # image2text
-可用于dify-on-wechat和chatgpt-on-wechat的插件，用于图生文、图生图，支持配置多个关键字来调用不同的模型，支持兼容openai的API接口。
+可用于dify-on-wechat和chatgpt-on-wechat的插件，现在已适配xxxbot-pad，用于图生文、图生图，支持配置多个关键字来调用不同的模型，支持兼容openai的API接口。
 
 
 0.0.1已发布
